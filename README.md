@@ -72,9 +72,17 @@ The fallback launches a fresh browser per check and closes it immediately after,
 
 Playwright requires the Chromium browser binary to be installed, which needs to happen during Render's build phase:
 
-**Build Command**: `npm install && npx playwright install chromium`
+**Build Command**: `npm install && node node_modules/playwright/cli.js install chromium`
 
-(No `--with-deps` — that flag tries to install OS-level system libraries via `apt`/`sudo`, which Render's build environment doesn't grant root access for, and the build will fail with an authentication error. Dropping it just installs the Chromium binary itself, without the OS package layer.)
+(Not `npx playwright install chromium` — Render's build cache strips the executable bit off `node_modules/.bin/playwright` when restoring from cache, which causes a "Permission denied" error even though the package installed successfully. Invoking `cli.js` directly through `node` sidesteps that shell-shim entirely.)
+
+No `--with-deps` either — that flag tries to install OS-level system libraries via `apt`/`sudo`, which Render's build environment doesn't grant root access for, and fails with an authentication error. Dropping it just installs the Chromium binary itself, without the OS package layer.
+
+**Required environment variable**: `PLAYWRIGHT_BROWSERS_PATH` → `0`
+
+By default, Playwright installs the browser binary to `~/.cache/ms-playwright`, which lives *outside* your project directory. Render's build and runtime stages don't share that cache location — the browser exists during build, then is gone by the time the app actually runs, causing an "Executable doesn't exist" error at launch. Setting `PLAYWRIGHT_BROWSERS_PATH=0` tells Playwright to install the browser inside `node_modules/playwright` instead, which — being part of the project directory — actually gets carried over to the running instance.
+
+Add this alongside your other environment variables in Render's dashboard (Settings → Environment) and trigger a fresh deploy (which re-runs the build with this variable set, reinstalling Chromium to the new path).
 
 There is deliberately **no `postinstall` script** in `package.json` — running Playwright's install automatically via `postinstall` caused a separate "Permission denied" failure on Render's build environment (a race condition executing the freshly-installed binary). Setting the Build Command explicitly, as above, avoids that.
 

@@ -52,9 +52,13 @@ async function fetchProductPageRendered(url) {
     });
     const page = await context.newPage();
 
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
-    // Small extra wait for any late stock-status rendering after network idle.
-    await page.waitForTimeout(1000);
+    // 'networkidle' is too strict for pages with persistent background
+    // activity (chat widgets, analytics beacons) — Lazada's PDP pages
+    // often never go fully idle, causing false timeouts. 'domcontentloaded'
+    // fires once the initial HTML is parsed; we then wait a bit longer
+    // for client-side rendering to fill in the stock UI.
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(4000); // give client-side rendering time to populate stock data
 
     const html = await page.content();
     return html;
@@ -113,6 +117,16 @@ async function checkStock(url) {
   console.log(`  [fallback] fast path returned unknown for ${url}, rendering with headless browser...`);
   const renderedHtml = await fetchProductPageRendered(url);
   const renderedSignal = extractStockSignal(renderedHtml);
+
+  if (renderedSignal.inStock === null) {
+    // Debug aid: show what's actually on the rendered page so patterns in
+    // extractStockSignal() can be adjusted to match reality instead of guessing.
+    const cheerioForDebug = cheerio.load(renderedHtml);
+    const visibleText = cheerioForDebug('body').text().replace(/\s+/g, ' ').trim();
+    console.log(`  [debug] rendered HTML length: ${renderedHtml.length} chars`);
+    console.log(`  [debug] visible text sample (500 chars): ${visibleText.slice(0, 500)}`);
+  }
+
   return { ...renderedSignal, source: `${renderedSignal.source}-rendered` };
 }
 
