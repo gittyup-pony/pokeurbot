@@ -92,6 +92,13 @@ bot.command('list', (ctx) => {
   ctx.reply(`You're watching ${urls.length} product(s):\n\n${urls.join('\n')}`);
 });
 
+bot.telegram.setMyCommands([
+  { command: 'watch', description: 'Add a Lazada product URL to your list' },
+  { command: 'unwatch', description: 'Remove a product URL from your list' },
+  { command: 'list', description: 'Show what you are currently watching' },
+  { command: 'help', description: 'Show available commands' },
+]);
+
 bot.launch();
 console.log('Telegram bot launched (long polling).');
 
