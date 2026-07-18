@@ -76,7 +76,9 @@ Playwright requires the Chromium browser binary to be installed, which needs to 
 
 (No `--with-deps` — that flag tries to install OS-level system libraries via `apt`/`sudo`, which Render's build environment doesn't grant root access for, and the build will fail with an authentication error. Dropping it just installs the Chromium binary itself, without the OS package layer.)
 
-The `postinstall` script in `package.json` matches this and runs automatically on every `npm install`, but setting the Build Command explicitly on Render is more reliable than relying on postinstall alone.
+There is deliberately **no `postinstall` script** in `package.json` — running Playwright's install automatically via `postinstall` caused a separate "Permission denied" failure on Render's build environment (a race condition executing the freshly-installed binary). Setting the Build Command explicitly, as above, avoids that.
+
+**Important**: this Build Command has to be set in Render's dashboard (Settings → Build Command) — pushing code to GitHub does not change it. If your logs still show the old command, that's the setting to check first.
 
 **If Chromium fails to launch at runtime** (not at build time) with an error about missing shared libraries: that means Render's base image is missing an OS-level dependency `--with-deps` would normally have installed. If you hit this, the practical options are switching to a Docker-based Render deploy (where you control the base image and can install those libraries yourself), or moving off the free tier to a plan with more deployment flexibility. Worth trying the plain install first — Render's Ubuntu-based images often already have most of what Chromium needs.
 
