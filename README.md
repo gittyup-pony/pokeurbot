@@ -61,9 +61,37 @@ Render's free tier only covers Web Services and static sites — Background Work
 
 Worth doing this only if you're expecting the bot to be actively used by others long-term — otherwise the simple JSON file is fine to start with.
 
+## Stock detection: two-tier approach
+
+1. **Fast path** — plain HTTP fetch (`fetchProductPage`), works when Lazada embeds real stock data in server-rendered HTML.
+2. **Fallback** — only when the fast path returns `unknown`, a headless Chromium browser (Playwright) actually loads and renders the page, the same way a real visitor's browser would. This means any client-side-rendered stock data (and any anti-bot fingerprinting Lazada's page performs) happens legitimately — nothing is spoofed or forged, we're just paying the cost of a real page load instead of a lightweight fetch.
+
+The fallback launches a fresh browser per check and closes it immediately after, rather than keeping one running persistently, to avoid compounding memory usage across poll cycles.
+
+## ⚠️ Important: Render deployment now needs a different build step
+
+Playwright requires the Chromium browser binary to be installed, which needs to happen during Render's build phase:
+
+**Build Command**: `npm install && npx playwright install chromium`
+
+(No `--with-deps` — that flag tries to install OS-level system libraries via `apt`/`sudo`, which Render's build environment doesn't grant root access for, and the build will fail with an authentication error. Dropping it just installs the Chromium binary itself, without the OS package layer.)
+
+The `postinstall` script in `package.json` matches this and runs automatically on every `npm install`, but setting the Build Command explicitly on Render is more reliable than relying on postinstall alone.
+
+**If Chromium fails to launch at runtime** (not at build time) with an error about missing shared libraries: that means Render's base image is missing an OS-level dependency `--with-deps` would normally have installed. If you hit this, the practical options are switching to a Docker-based Render deploy (where you control the base image and can install those libraries yourself), or moving off the free tier to a plan with more deployment flexibility. Worth trying the plain install first — Render's Ubuntu-based images often already have most of what Chromium needs.
+
+## ⚠️ RAM warning — this may not fit on Render's free tier
+
+Render's free Web Service gives **512MB RAM**. A headless Chromium page load typically needs 300-500MB on its own — on top of what the bot's HTTP server, Telegram polling, and Node process already use. This is genuinely tight and may crash or get OOM-killed on the free tier, especially if multiple people's watched URLs hit the fallback around the same time.
+
+Realistic paths forward if you hit this:
+- **It mostly works fine** if the fallback triggers rarely (most watched products use the fast path successfully) — worth just trying it and watching Render's logs/metrics for OOM kills.
+- **Upgrade to Render's Starter tier** ($7/month) for headroom if the free tier proves unstable.
+- **Reduce the depth of the fallback** — e.g., only invoke Playwright when you specifically request a manual re-check on a `null`-result product, rather than automatically on every poll cycle.
+
 ## If stock detection stops working
 
-Same as before — Lazada's page structure can change. See `stock.js`'s `extractStockSignal()` and use DevTools to find the current stock/quantity field if alerts stop firing on items you know are in stock.
+Lazada's page structure (or their `mtop` API shape) can change over time. See `stock.js`'s `extractStockSignal()` and use DevTools to find the current stock/quantity field if alerts stop firing on items you know are in stock. Check the Render logs for `[fallback]` lines to see whether the fast path or the rendered fallback is being used for a given product.
 
 ## Etiquette / ToS note
 

@@ -1,21 +1,66 @@
 /**
  * stock.js — page fetch + stock signal extraction.
- * Same detection logic as the single-user version. See README if Lazada's
- * page structure changes and these patterns stop matching.
+ *
+ * Two-tier approach:
+ *   1. Fast path: plain HTTP GET (fetchProductPage). Works for pages that
+ *      embed real stock data in server-rendered HTML. Cheap, fast, no
+ *      extra infra.
+ *   2. Fallback: headless-browser render (fetchProductPageRendered), used
+ *      ONLY when the fast path can't find a stock signal. This actually
+ *      executes the page's JavaScript in a real (headless) Chromium
+ *      instance, so any client-side-rendered stock data — and any
+ *      anti-bot fingerprinting the page does — happens the same way it
+ *      would for a real visitor. We are not spoofing or forging anything;
+ *      we're just running the page for real, the slow/heavy way, instead
+ *      of faking a fast/light request.
+ *
+ * The fallback launches and closes a fresh browser per call rather than
+ * keeping one running persistently — slower, but keeps memory usage from
+ * compounding across poll cycles, which matters on Render's free tier.
  */
 
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
 async function fetchProductPage(url) {
   const headers = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'User-Agent': BROWSER_USER_AGENT,
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-SG,en;q=0.9',
   };
   const { data: html } = await axios.get(url, { headers, timeout: 15000 });
   return html;
+}
+
+async function fetchProductPageRendered(url) {
+  // Lazy require — keeps startup fast and avoids loading Chromium's
+  // bindings for checks that never need the fallback.
+  const { chromium } = require('playwright');
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'], // needed on memory-constrained containers
+  });
+
+  try {
+    const context = await browser.newContext({
+      userAgent: BROWSER_USER_AGENT,
+      locale: 'en-SG',
+    });
+    const page = await context.newPage();
+
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
+    // Small extra wait for any late stock-status rendering after network idle.
+    await page.waitForTimeout(1000);
+
+    const html = await page.content();
+    return html;
+  } finally {
+    await browser.close(); // always release memory, even on error
+  }
 }
 
 function extractStockSignal(html) {
@@ -53,4 +98,22 @@ function extractStockSignal(html) {
   return { inStock: null, source: 'unknown', raw: null };
 }
 
-module.exports = { fetchProductPage, extractStockSignal };
+/**
+ * checkStock — the single entry point bot.js should call. Tries the fast
+ * path first; only pays the Playwright cost if the fast path can't tell.
+ */
+async function checkStock(url) {
+  const fastHtml = await fetchProductPage(url);
+  const fastSignal = extractStockSignal(fastHtml);
+
+  if (fastSignal.inStock !== null) {
+    return fastSignal;
+  }
+
+  console.log(`  [fallback] fast path returned unknown for ${url}, rendering with headless browser...`);
+  const renderedHtml = await fetchProductPageRendered(url);
+  const renderedSignal = extractStockSignal(renderedHtml);
+  return { ...renderedSignal, source: `${renderedSignal.source}-rendered` };
+}
+
+module.exports = { fetchProductPage, fetchProductPageRendered, extractStockSignal, checkStock };

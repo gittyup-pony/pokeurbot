@@ -18,7 +18,7 @@ const http = require('http');
 const axios = require('axios');
 const { Telegraf } = require('telegraf');
 const db = require('./db');
-const { fetchProductPage, extractStockSignal } = require('./stock');
+const { checkStock } = require('./stock');
 
 const { TELEGRAM_BOT_TOKEN, POLL_INTERVAL_SECONDS = '30', PORT = '3000', RENDER_EXTERNAL_URL } = process.env;
 
@@ -137,8 +137,7 @@ if (RENDER_EXTERNAL_URL) {
 // ---------- shared polling loop ----------
 
 async function checkUrl(url) {
-  const html = await fetchProductPage(url);
-  const signal = extractStockSignal(html);
+  const signal = await checkStock(url);
 
   const prev = db.getStock(url);
   const prevInStock = prev.inStock;
