@@ -18,6 +18,10 @@ A read-only Telegram bot that lets anyone message it and add their own Lazada pr
 | `/list` | Show what you're currently watching |
 | `/help` | Show commands |
 
+## Library note
+
+Built on `telegraf` (actively maintained, zero known vulnerabilities as of this writing) rather than `node-telegram-bot-api`, which pulls in the deprecated `request` library and its outdated transitive dependencies. Run `npm audit` any time to confirm it's still clean.
+
 ## Setup
 
 1. **Create a Telegram bot** via [@BotFather](https://t.me/BotFather) -> `/newbot` -> copy the token.
@@ -31,13 +35,22 @@ A read-only Telegram bot that lets anyone message it and add their own Lazada pr
 
 Anyone who knows your bot's username can now add themselves and their own product URLs — no code changes needed per person.
 
-## Deploying to Render
+## Deploying to Render (free Web Service, not a paid Background Worker)
 
-Same as before, but note the polling mode difference:
+Render's free tier only covers Web Services and static sites — Background Workers require a paid plan (from $7/month). So this deploys as a **Web Service** instead, using the same self-ping pattern as `picklebolbot`:
 
-- Deploy as a **Background Worker** (not Web Service) — same reasoning as the single-user version.
-- Set `TELEGRAM_BOT_TOKEN`, `POLL_INTERVAL_SECONDS`, `DB_FILE` as environment variables in the Render dashboard.
-- This version uses Telegram's `polling: true` mode (via `node-telegram-bot-api`) to *receive* `/watch` commands, not just send alerts — this works fine on a background worker since Telegram polling is an outbound long-poll connection, not an inbound webhook, so no public URL is needed.
+- The bot runs a minimal HTTP server (just responds "alive" to any request) so Render recognizes it as a web service.
+- It self-pings its own `RENDER_EXTERNAL_URL` every 10 minutes — Render sets this environment variable automatically, no manual config needed — which keeps the free instance from spinning down after 15 minutes of inactivity.
+- Telegram's `/watch` commands still work fine — the bot uses `polling: true` (an outbound long-poll connection to Telegram), which is unrelated to the HTTP server and needs no public webhook.
+
+**Render setup:**
+- New → **Web Service** (not Background Worker) → connect the `laz-stock-watcher` repo.
+- Build Command: `npm install`
+- Start Command: `npm start`
+- Instance Type: **Free**
+- Environment variables: `TELEGRAM_BOT_TOKEN`, `POLL_INTERVAL_SECONDS` (`30`), `DB_FILE` (`./data.json`). Don't set `PORT` or `RENDER_EXTERNAL_URL` — Render provides both automatically.
+
+**Trade-off**: the first request after any spin-down (rare, since self-ping should prevent it) takes about a minute to wake up. In practice this only matters if the self-ping somehow fails for over 15 minutes straight — worth checking Render's logs occasionally to confirm the ping is firing.
 
 ## Data persistence caveat
 
